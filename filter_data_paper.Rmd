@@ -1,0 +1,596 @@
+---
+title: "COVID-19: impact of original, Gamma, Delta, and Omicron variants of SARS-CoV-2 in vaccinated and unvaccinated pregnant and postpartum women"
+author: 'Codes and outputs'
+date: "25/07/22"
+output:   
+  pdf_document:
+    keep_tex: yes
+  word_document: default
+  html_document:
+    df_print: paged
+    self_contained: no
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+\newpage
+# Description
+ 
+This file presents the documentation of the analysis of article "Demographic and epidemiological characteristics of pregnant and postpartum women who died from Severe Acute Respiratory Syndrome in Brazil: a comparison between COVID-19 and nonspecific etiologic causes".
+
+# R packages used, functions and dataset import
+
+
+The data are analyzed using the free-software R (https://www.R-project.org) in version 4.0.3. Next, we present and load the libraries used in the data analysis process.
+
+```{r pacotes, echo=TRUE, message=FALSE, warning =FALSE,error=FALSE, results='hide'}
+#carregar pacotes
+loadlibrary <- function(x) {
+  if (!require(x, character.only = TRUE)) {
+    install.packages(x, dependencies = T)
+    if (!require(x, character.only = TRUE))
+      stop("Package not found")
+  }
+}
+
+packages <-
+  c(
+    "readr",
+    "readxl",
+    "janitor",
+    "dplyr",
+    "forcats",
+    "stringr",
+    "lubridate",
+    "summarytools",
+    "magrittr",
+    "questionr",
+    "knitr",
+    "data.table",
+    "writexl",
+    "modelsummary"
+  )
+lapply(packages, loadlibrary)
+```
+
+
+The Influenza Epidemiological Surveillance Information System, SIVEP-Gripe (Sistema de Informação de Vigilância Epidemiológica da Gripe), is a nationwide surveillance database used to monitor severe acute respiratory infections in Brazil. 
+
+Notification is mandatory for Influenza Syndrome (characterized by at least two of the following signs and symptoms: fever, even if referred, chills, sore throat, headache, cough, runny nose, olfactory or taste disorders) and who has dyspnea/respiratory discomfort or persistent pressure in the chest or O2 saturation less than 95\% in room air or bluish color of the lips or face. Asymptomatic individuals with laboratory confirmation by molecular biology or immunological examination for COVID-19 infection are also reported.
+
+For notifications in Sivep-Gripe, hospitalized cases in both public and private hospitals and all deaths due to severe acute respiratory infections regardless of hospitalization must be considered.
+
+The search was limited to the first notified case of COVID-19 in February 2020 until the 28th epidemiological week of 2022 (up to July 16, 2021). The datasets were obtained on May 25, 2022, on the site https://opendatasus.saude.gov.br/dataset. The first period (8th to 53rd epidemiological week of 2020), the second period (1st to 53rd epidemiological week of 2021) and the third period (1st to 28th epidemiological week of 2022)datasets can be obtained as below:
+
+```{r,echo=FALSE, eval=TRUE, message=FALSE,warning =FALSE,error=FALSE,results='hide'}
+ memory.limit(999999)
+```
+
+```{r,echo=TRUE,message=FALSE,warning =FALSE,error=FALSE,results='hide'}
+######### load data base in opendatasus ###########
+ckanr::ckanr_setup("https://opendatasus.saude.gov.br")
+
+arqs <- ckanr::package_search("srag 2020")$results %>%
+  purrr::map("resources") %>%
+  purrr::map(purrr::keep, ~ .x$mimetype == "text/csv") %>%
+  purrr::map_chr(purrr::pluck, 1, "url")
+
+arqs2 <- ckanr::package_search("srag 2021")$results %>%
+  purrr::map("resources") %>%
+  purrr::map(purrr::keep, ~ .x$mimetype == "text/csv") %>%
+  purrr::map_chr(purrr::pluck, 2, "url")
+
+dados_a <- fread(arqs[1], sep = ";")
+
+dados_b <- fread(arqs[2], sep = ";")
+
+dados_c <- fread(arqs2[1], sep = ";")
+
+#### merge datas 2020, 2021 e 2022 ##############
+dados_a <- dados_a %>%
+  mutate(FATOR_RISC = case_when(FATOR_RISC == 1 ~ "S",
+                                FATOR_RISC == 2 ~ "N"))
+dados_b <- dados_b %>%
+  mutate(FATOR_RISC = case_when(FATOR_RISC == 1 ~ "S",
+                                FATOR_RISC == 2 ~ "N"))
+
+dados_c <- dados_c %>%
+  mutate(FATOR_RISC = case_when(FATOR_RISC == 1 ~ "S",
+                                FATOR_RISC == 2 ~ "N"))
+
+# same class cod_idade
+
+dados_c$COD_IDADE <- as.character(dados_c$COD_IDADE)
+
+dados1 <- dados_a %>%
+  full_join(dados_b) %>%
+  full_join(dados_c)
+
+rm(dados_a,dados_b,dados_c,arqs,arqs2)
+
+#Criar variavel de ano do caso
+data_all <-  dados1 %>%
+  dplyr::mutate(
+    dt_sint = as.Date(DT_SIN_PRI, format = "%d/%m/%Y"),
+    dt_nasc = as.Date(DT_NASC, format = "%d/%m/%Y"),
+    year_case = lubridate::year(dt_sint),
+  ) %>%
+  filter(
+    dt_sint >= as.Date("16-02-2020", format = "%d-%m-%Y") &
+      dt_sint <= as.Date("16-07-2022", format = "%d-%m-%Y")
+  ) 
+```
+ 
+
+There are `r dim(data_all)[1]` cases in the complete dataset.  The case selection is presented in the following according to the flowchart presented in the article. 
+
+# Case selection and data treatment
+
+We are going to select only the cases hospitalized confirmed by COVID-19 (CLASSI_FIN = 5) and hospitaled cases. The other cases are influenza(CLASSI_FIN = 1), other virus(CLASSI_FIN = 2), other etiologic agent(CLASSI_FIN = 3) and unspecified (CLASSI_FIN = 4).
+
+Now are going select the hospitalized cases.
+
+```{r, echo=TRUE, eval= TRUE, message=FALSE, warning =FALSE, error=FALSE}
+data_all <- data_all %>% 
+  filter(HOSPITAL == 1)
+```
+
+There are `r dim(data_all)[1]` cases.
+
+Now we are going to select only the cases confirmed by COVID-19 (CLASSI_FIN = 5).
+
+```{r, echo=TRUE, eval= TRUE, message=FALSE, warning =FALSE, error=FALSE}
+data_all <- data_all %>% 
+  filter(CLASSI_FIN == 5)
+```
+
+There are `r dim(data_all)[1]` observations.
+
+The next step consists in selecting cases with positive TR-PCR. 
+
+```{r, echo=TRUE, eval= TRUE, message=FALSE, warning =FALSE, error=FALSE}
+# case with PCR
+data_all <- data_all %>%
+  mutate(pcr_SN = case_when(
+    (PCR_SARS2 == 1) |
+      (
+        str_detect(DS_PCR_OUT, "SARS|COVID|COV|CORONA|CIVID") 
+      ) ~ "yes",
+    TRUE ~ "no"
+  ))
+
+
+# identify sorology
+data_all$res_igg <-
+  ifelse(is.na(data_all$RES_IGG) == TRUE, 0, data_all$RES_IGG)
+
+data_all$res_igm <-
+  ifelse(is.na(data_all$RES_IGM) == TRUE, 0, data_all$RES_IGM)
+
+data_all$res_iga <-
+  ifelse(is.na(data_all$RES_IGA) == TRUE, 0, data_all$RES_IGA)
+
+data_all$sorologia_SN <-
+  ifelse(data_all$res_igg == 1 |
+           data_all$res_igm == 1 | data_all$res_iga == 1,
+         "yes",
+         "no")
+
+# identify antigeno
+data_all <- data_all %>%
+  mutate(antigeno_SN = case_when(
+    (AN_SARS2 == 1) | #positivo
+      (
+        str_detect(DS_AN_OUT, "SARS|COVID|COV|CORONA|CONA") 
+      )  ~ "yes",
+    TRUE ~ "no"
+  ))
+```
+
+```{r, echo=TRUE, eval= TRUE, message=FALSE, warning =FALSE, error=FALSE}
+#Criação da variável de classificação da covid-19
+data_all <- data_all %>%
+  mutate(
+    classi_covid = case_when(
+      CLASSI_FIN == 5 & pcr_SN == "yes"  ~ "pcr",
+      CLASSI_FIN == 5 & pcr_SN == "no" &
+        antigeno_SN == "yes" ~ "antigenio",
+      CLASSI_FIN == 5 & sorologia_SN == "yes" &
+        antigeno_SN == "no" &
+        pcr_SN == "no" ~ "sorologia",
+      CLASSI_FIN != 5 ~ "no", #não é outro agente etiológico ou não especificado
+      TRUE ~ "outro"
+    )
+  )
+```
+
+Now we are filter positive RT-PCR cases.
+
+```{r, echo=TRUE, eval= TRUE, message=FALSE, warning =FALSE, error=FALSE}
+data_all <- data_all %>% 
+  filter(classi_covid == "pcr")
+```
+
+There are `r dim(data_all)[1]` observations.
+
+The next step is to identify pregnant and postpartum people (variable `classi_gesta_puerp`) and then select only those cases.
+
+```{r, echo=TRUE, eval= TRUE, message=FALSE, warning =FALSE, error=FALSE}
+#Creating the classification variable if pregnant, postpartum and not (neither pregnant nor postpartum)
+data_all <- data_all %>%
+  mutate(
+    classi_gesta_puerp = case_when(
+      CS_GESTANT == 1  ~ "1tri", #1st trimester
+      CS_GESTANT == 2  ~ "2tri", #2st trimester
+      CS_GESTANT == 3  ~ "3tri", #3st trimester
+      CS_GESTANT == 4  ~ "GA_ig", #ignored gestational Age
+      CS_GESTANT == 5 &
+        PUERPERA == 1 ~ "puerp", #puerperium
+      CS_GESTANT == 9 & PUERPERA == 1 ~ "puerp",  #puerperium
+      TRUE ~ "no" #neither pregnant nor postpartum 
+    )
+  )
+
+```
+
+The next selection consists of selecting females cases:
+
+```{r, echo=TRUE, eval= TRUE, message=FALSE, warning =FALSE, error=FALSE}
+# Filter females cases
+data_all <- data_all %>% 
+  filter(CS_SEXO == "F")
+```
+
+There are `r dim(data_all)[1]` observations.
+
+The next selection consists of selecting women between 10 and 55 years old. 
+
+```{r, echo=TRUE, eval= TRUE, message=FALSE, warning =FALSE, error=FALSE}
+data_all <- data_all %>% 
+  mutate(
+         age = as.period(interval(start = dt_nasc, end = dt_sint))$year, 
+         age_year = ifelse(is.na(age), NU_IDADE_N, age)
+  )
+
+# filter cases
+data_all <-data_all %>% 
+  filter(age_year > 9 & age_year <= 49)
+```
+
+There are `r dim(data_all)[1]` observations.
+
+Now we are going filter only pregnant and postpartum women.
+
+```{r, echo=TRUE, eval= TRUE, message=FALSE, warning =FALSE, error=FALSE}
+#Filtering only pregnant and postpartum women
+data_all <- data_all %>%
+  filter(classi_gesta_puerp != "no") 
+
+```
+
+There are `r dim(data_all)[1]` observations.
+
+Now let's create a variant identifier.
+
+```{r}
+#variable variants
+in_gama <- as.Date("01-02-2021",format="%d-%m-%Y")
+in_delta <- as.Date("01-08-2021",format="%d-%m-%Y")
+in_ommi <- as.Date("01-01-2022",format="%d-%m
+                   -%Y")
+data_all <- data_all %>% 
+  mutate(variants = case_when(dt_sint < in_gama ~ "original",
+                              dt_sint >= in_gama & dt_sint < in_delta ~ "gama",
+                              dt_sint >= in_delta & dt_sint < in_ommi ~ "delta",
+                              dt_sint >= in_ommi ~ "omicron"))
+```
+
+```{r,echo=TRUE,eval=TRUE,warning=FALSE,message=FALSE}
+data_all <- data_all %>%
+  mutate(
+    group = case_when(
+      CS_GESTANT == 1 | CS_GESTANT == 2 |  CS_GESTANT == 3 | CS_GESTANT == 4  ~ "pregnant",
+      CS_GESTANT == 5 &
+        PUERPERA == 1 ~ "puerp",
+      CS_GESTANT == 9 & PUERPERA == 1 ~ "puerp",
+      TRUE ~ "no"
+    )
+  )
+ctable(data_all$variante,data_all$group)
+```
+
+```{r,echo=FALSE}
+# data_1 <- readRDS("dados6.rds")
+# in_gama <- as.Date("01-02-2021",format="%d-%m-%Y")
+# in_delta <- as.Date("01-08-2021",format="%d-%m-%Y")
+# in_ommi <- as.Date("01-01-2022",format="%d-%m
+#                    -%Y")
+# data_1  <- data_1  %>% 
+#   mutate(variants = case_when(dt_sint < in_gama ~ "original",
+#                               dt_sint >= in_gama & dt_sint < in_delta ~ "gama",
+#                               dt_sint >= in_delta & dt_sint < in_ommi ~ "delta",
+#                               dt_sint >= in_ommi ~ "omicron"))
+# data_1  <- data_1  %>%
+#   mutate(
+#     group = case_when(
+#       grupos == "gestante" ~ "pregnant",
+#       grupos == "puerpera" ~ "puerp",
+#       TRUE ~ "no"
+#     )
+#   )
+# 
+# ctable(data_1$variants,data_1$group)
+```
+
+
+**Regions of Brazil:**
+
+```{r, echo=TRUE, eval= TRUE, message=FALSE, warning =FALSE, error=FALSE}
+#Criação da variável de região
+regions <- function(state) {
+  southeast <- c("SP", "RJ", "ES", "MG")
+  south <- c("PR", "SC", "RS")
+  central <- c("GO", "MT", "MS", "DF")
+  northeast <-
+    c("AL", "BA", "CE", "MA", "PB", "PE", "PI", "RN", "SE")
+  north <- c("AC", "AP", "AM", "PA", "RO", "RR", "TO")
+  out <-
+    ifelse(any(state == southeast),
+           "southeast",
+           ifelse(any(state == south),
+                  "south",
+                  ifelse(
+                    any(state == central),
+                    "central",
+                    ifelse(any(state == northeast),
+                           "northeast", "north")
+                  )))
+  return(out)
+}
+
+data_all$region <- sapply(data_all$SG_UF, regions)
+data_all$region <-
+  ifelse(is.na(data_all$region) == TRUE, 0, data_all$region)
+```
+
+## Epidemiologic characteristics 
+
+```{r, echo=TRUE, eval= TRUE, message=FALSE, warning =FALSE, error=FALSE}
+# Ethnicity
+data_all <-  data_all %>%
+  mutate(
+    ethnicity = case_when(
+      CS_RACA == 1 ~ "white",
+      CS_RACA == 2 ~ "black",
+      CS_RACA == 3 ~ "yellow",
+      CS_RACA == 4 ~ "brown",
+      CS_RACA == 5 ~ "indigenous",
+      TRUE ~ NA_character_
+    )
+  )
+
+# Education
+data_all <-  data_all %>%
+  mutate(education = case_when(CS_ESCOL_N == 0 ~ "No education",
+                             CS_ESCOL_N == 1 | CS_ESCOL_N == 2 ~ "Up to high school",
+                             CS_ESCOL_N == 3 ~ "High school",
+                             CS_ESCOL_N == 4 ~ "College",
+                               TRUE ~ NA_character_))
+
+data_all$education <- factor(data_all$education, 
+                     levels = c("No education","Up to high school", 
+                                "High school", "College"))
+
+# Age group
+data_all <-  data_all %>%
+  mutate(
+    age_group = case_when(
+      NU_IDADE_N <= 19 ~ "<20",
+      NU_IDADE_N >= 20
+      & NU_IDADE_N <= 34 ~ "20-34",
+      NU_IDADE_N >= 35 ~ ">=35",
+      TRUE ~ NA_character_
+    )
+  )
+data_all$age_group <-
+  factor(data_all$age_group, levels = c("<20", "20-34", ">=35"))
+
+
+# Residence area
+data_all <-  data_all %>%
+  mutate(zone = case_when(CS_ZONA ==1 | CS_ZONA == 3 ~ "urban",
+                             CS_ZONA == 2 ~ "rural",
+                               TRUE ~ NA_character_))
+
+#flu vacine
+data_all<-  data_all %>%
+  mutate(vacine = case_when(VACINA == 1 ~ "sim",
+                            VACINA == 2 ~ "não",
+                            TRUE ~ NA_character_))
+#covid-19 vacine
+data_all <-  data_all %>%
+  mutate(vacine_cov = case_when(VACINA_COV == 1 ~ "sim",
+                            VACINA_COV == 2 ~ "não",
+                            variants == "original" ~ "não",
+                            TRUE ~ NA_character_))
+```
+
+## Symptoms
+
+```{r, echo=TRUE, eval= TRUE, message=FALSE, warning =FALSE, error=FALSE}
+# Fever
+data_all <-  data_all %>%
+  mutate(fever = case_when(FEBRE == 1 ~ "yes",
+                           FEBRE == 2 ~ "no",
+                           TRUE ~ NA_character_))
+
+# Cough
+data_all <-  data_all %>%
+  mutate(cough = case_when(TOSSE == 1 ~ "yes",
+                           TOSSE == 2 ~ "no",
+                           TRUE ~ NA_character_))
+
+# Sore throat
+data_all <-  data_all %>%
+  mutate(sore_throat = case_when(GARGANTA == 1 ~ "yes",
+                                 GARGANTA == 2 ~ "no",
+                                 TRUE ~ NA_character_))
+
+# Dyspnea
+data_all <-  data_all %>%
+  mutate(dyspnea = case_when(DISPNEIA == 1 ~ "yes",
+                             DISPNEIA == 2 ~ "no",
+                             TRUE ~ NA_character_))
+
+# Respiratory discomfort
+data_all <-  data_all %>%
+  mutate(resp_disc = case_when(DESC_RESP == 1 ~ "yes",
+                               DESC_RESP == 2 ~ "no",
+                               TRUE ~ NA_character_))
+
+# Desaturation SpO2 <95%
+data_all <-  data_all %>%
+  mutate(desaturation = case_when(SATURACAO == 1 ~ "yes",
+                                  SATURACAO == 2 ~ "no",
+                                  TRUE ~ NA_character_))
+
+# Diarrhea
+data_all <-  data_all %>%
+  mutate(diarrhea = case_when(DIARREIA == 1 ~ "yes",
+                              DIARREIA == 2 ~ "no",
+                              TRUE ~ NA_character_))
+
+# Vomit
+data_all <-  data_all %>%
+  mutate(vomit = case_when(VOMITO == 1 ~ "yes",
+                           VOMITO == 2 ~ "no",
+                           TRUE ~ NA_character_))
+
+# Abdominal pain
+data_all <-  data_all %>%
+  mutate(abd_pain = case_when(DOR_ABD == 1 ~ "yes",
+                              DOR_ABD == 2 ~ "no",
+                              TRUE ~ NA_character_))
+
+# Fatigue
+data_all <-  data_all %>%
+  mutate(fatigue = case_when(FADIGA == 1 ~ "yes",
+                             FADIGA == 2 ~ "no",
+                             TRUE ~ NA_character_))
+
+# Olfactory loss
+data_all <-  data_all %>%
+  mutate(olfac_loss = case_when(PERD_OLFT == 1 ~ "yes",
+                                PERD_OLFT == 2 ~ "no",
+                                TRUE ~ NA_character_))
+
+# Loss of taste
+data_all <-  data_all %>%
+  mutate(loss_taste = case_when(PERD_PALA == 1 ~ "yes",
+                                PERD_PALA == 2 ~ "no",
+                                TRUE ~ NA_character_))
+```
+
+## Comorbidades
+
+```{r, echo=TRUE, eval= TRUE, message=FALSE, warning =FALSE, error=FALSE}
+#Cardiac
+data_all <-  data_all %>%
+  mutate(cardiac = case_when(CARDIOPATI == 1 ~ "yes",
+                             CARDIOPATI == 2 ~ "no",
+                             TRUE ~ NA_character_))
+
+#Hematologic
+data_all <-  data_all %>%
+  mutate(hematologic = case_when(HEMATOLOGI == 1 ~ "yes",
+                                 HEMATOLOGI == 2 ~ "no",
+                                 TRUE ~ NA_character_))
+
+#Hepatic
+data_all <-  data_all %>%
+  mutate(hepatic = case_when(HEPATICA == 1 ~ "yes",
+                             HEPATICA == 2 ~ "no",
+                             TRUE ~ NA_character_))
+
+#Asthma
+data_all <-  data_all %>%
+  mutate(asthma = case_when(ASMA == 1 ~ "yes",
+                            ASMA == 2 ~ "no",
+                            TRUE ~ NA_character_))
+
+#Diabetes
+data_all <-  data_all %>%
+  mutate(diabetes = case_when(DIABETES == 1 ~ "yes",
+                              DIABETES == 2 ~ "no",
+                              TRUE ~ NA_character_))
+
+#Neurologic
+data_all <-  data_all %>%
+  mutate(neurologic = case_when(NEUROLOGIC == 1 ~ "yes",
+                                NEUROLOGIC == 2 ~ "no",
+                                TRUE ~ NA_character_))
+
+#Pneumologic
+data_all <-  data_all %>%
+  mutate(pneumologic = case_when(PNEUMOPATI == 1 ~ "yes",
+                                 PNEUMOPATI == 2 ~ "no",
+                                 TRUE ~ NA_character_))
+
+#Imunossupression
+data_all <-  data_all %>%
+  mutate(imuno = case_when(IMUNODEPRE == 1 ~ "yes",
+                           IMUNODEPRE == 2 ~ "no",
+                           TRUE ~ NA_character_))
+
+#Renal
+data_all <-  data_all %>%
+  mutate(renal = case_when(RENAL == 1 ~ "yes",
+                           RENAL == 2 ~ "no",
+                           TRUE ~ NA_character_))
+
+#Obesity
+data_all <-  data_all %>%
+  mutate(obesity = case_when(OBESIDADE == 1 ~ "yes",
+                             OBESIDADE == 2 ~ "no",
+                             TRUE ~ NA_character_))
+```
+
+# Outcome
+
+```{r, echo=TRUE, eval= TRUE, message=FALSE, warning =FALSE, error=FALSE}
+# Hospital-acquired infection
+data_all <-  data_all %>%
+  mutate(hospital_infection = case_when(NOSOCOMIAL ==1  ~ "yes",
+                             NOSOCOMIAL == 2 ~ "no",
+                               TRUE ~ NA_character_))
+# ICU admission
+data_all <- data_all %>%
+  mutate(icu = case_when(UTI == 1 ~ "yes",
+                         UTI == 2 ~ "no",
+                         TRUE ~ NA_character_))
+
+# Invasive respiratory support
+data_all <- data_all %>% 
+  mutate(intubation = case_when(SUPORT_VEN == 1 ~ "yes",
+                                SUPORT_VEN == 2 | SUPORT_VEN == 3 ~ "no",
+                                TRUE ~ NA_character_))
+# Death
+data_all <- data_all%>% 
+  mutate(death = case_when(
+    EVOLUCAO == 1 ~ "cure", 
+    EVOLUCAO == 2 ~ "death", 
+    EVOLUCAO == 3 ~ "death", 
+    TRUE ~ NA_character_
+  ))
+```
+
+# Export data base
+
+```{r, echo=TRUE, eval=TRUE, message=FALSE, warning =FALSE, error=FALSE}
+saveRDS(data_all,"data_paper.rds")
+```
